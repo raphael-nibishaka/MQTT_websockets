@@ -3,41 +3,237 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Weather Station (MQTT WebSockets)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+    <title>Weather Station (Real-Time)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment"></script>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-        .container { width: 300px; margin: auto; padding: 20px; border: 2px solid #007BFF; border-radius: 10px; background: #f4f4f4; }
-        h2 { color: #007BFF; }
-        .data { font-size: 24px; font-weight: bold; color: #333; }
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #F8F9FA;
+            padding: 20px;
+        }
+        .container {
+            max-width: 500px;
+            margin: auto;
+            padding: 20px;
+            border: 2px solid #007BFF;
+            border-radius: 10px;
+            background: #FFFFFF;
+            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        h2 {
+            color: #007BFF;
+        }
+        .data {
+            font-size: 22px;
+            font-weight: bold;
+            color: #333;
+        }
+        .chart-container {
+            width: 90%;
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        canvas {
+            width: 100% !important;
+            height: 400px !important;
+        }
     </style>
 </head>
 <body>
-    <h2>MQTT Weather Station</h2>
+    <h2>Real-Time Weather Station</h2>
     <div class="container">
         <p>Temperature: <span id="temp" class="data">--</span> °C</p>
         <p>Humidity: <span id="humidity" class="data">--</span> %</p>
     </div>
-
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
     <script>
-        // Connect to the MQTT Broker over WebSockets
-        const mqttClient = mqtt.connect('ws://157.173.101.159:9001');
-
-        mqttClient.on('connect', () => {
-            console.log("Connected to MQTT via WebSockets ");
-            mqttClient.subscribe("/work_group_01/room_temp/temperature");
-            mqttClient.subscribe("/work_group_01/room_temp/humidity");
-        });
-
-        mqttClient.on('message', (topic, message) => {
-            console.log(`Received: ${topic} → ${message.toString()}`);
-
-            if (topic === "/work_group_01/room_temp/temperature") {
-                document.getElementById("temp").innerText = message.toString();
-            } else if (topic === "/work_group_01/room_temp/humidity") {
-                document.getElementById("humidity").innerText = message.toString();
+        let lastTemp = null;
+        let lastHumidity = null;
+        // Real-time data updates every time new data is received
+        function updateLatestData() {
+            fetch("http://localhost:3000/latest")
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById("temp").innerText = data.temperature !== null ? data.temperature : "--";
+                    document.getElementById("humidity").innerText = data.humidity !== null ? data.humidity : "--";
+                })
+                .catch(error => console.error("Error fetching latest data:", error));
+        }
+        // Initialize the chart
+        const ctx = document.getElementById('chart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: "Temperature (°C)",
+                        borderColor: "#FF5733",
+                        backgroundColor: "rgba(255, 87, 51, 0.2)",
+                        data: [],
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 3
+                    },
+                    {
+                        label: "Humidity (%)",
+                        borderColor: "#3498DB",
+                        backgroundColor: "rgba(52, 152, 219, 0.2)",
+                        data: [],
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'minute',
+                            displayFormats: {
+                                minute: 'HH:mm',
+                            },
+                        },
+                        ticks: {
+                            stepSize: 5,
+                        },
+                        title: { display: true, text: "Time" },
+                        grid: { color: "rgba(0,0,0,0.1)" }
+                    },
+                    y: {
+                        beginAtZero: false,
+                        title: { display: true, text: "Value" },
+                        grid: { color: "rgba(0,0,0,0.1)" }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            font: {
+                                size: 14
+                            }
+                        }
+                    }
+                }
             }
         });
+        // Function to fetch all historical data initially
+        function fetchInitialGraphData() {
+            fetch("http://localhost:3000/data")
+                .then(response => response.json())
+                .then(data => {
+                    if (data.length === 0) return;
+                    // Clear existing data
+                    chart.data.labels = [];
+                    chart.data.datasets[0].data = [];
+                    chart.data.datasets[1].data = [];
+                    // Calculate timestamps for the last 50 minutes in 5-minute intervals
+                    const currentTime = new Date();
+                    const timePoints = [];
+                    for (let i = 50; i >= 0; i -= 5) {
+                        const timestamp = new Date(currentTime - i * 60000); // i minutes ago
+                        timePoints.push(timestamp);
+                    }
+                    // Find the closest data points to our desired timestamps
+                    timePoints.forEach(targetTime => {
+                        // Find the closest data point to this target time
+                        let closestPoint = data[0];
+                        let smallestDiff = Math.abs(new Date(data[0].timestamp) - targetTime);
+                        data.forEach(point => {
+                            const diff = Math.abs(new Date(point.timestamp) - targetTime);
+                            if (diff < smallestDiff) {
+                                smallestDiff = diff;
+                                closestPoint = point;
+                            }
+                        });
+                        // Only add the point if it's within 2.5 minutes of our target time
+                        if (smallestDiff <= 150000) { // 2.5 minutes in milliseconds
+                            chart.data.labels.push(targetTime);
+                            chart.data.datasets[0].data.push({
+                                x: targetTime,
+                                y: closestPoint.temperature
+                            });
+                            chart.data.datasets[1].data.push({
+                                x: targetTime,
+                                y: closestPoint.humidity
+                            });
+                        }
+                    });
+                    chart.update(); // Initial update with past data
+                })
+                .catch(error => console.error("Error fetching initial graph data:", error));
+        }
+        // Function to fetch new data every 5 minutes and update graph
+        function fetchGraphData() {
+            fetch("http://localhost:3000/data")
+                .then(response => response.json())
+                .then(data => {
+                    if (data.length === 0) return;
+                    // Clear existing data
+                    chart.data.labels = [];
+                    chart.data.datasets[0].data = [];
+                    chart.data.datasets[1].data = [];
+                    // Calculate timestamps for the last 50 minutes in 5-minute intervals
+                    const currentTime = new Date();
+                    const timePoints = [];
+                    for (let i = 50; i >= 0; i -= 5) {
+                        const timestamp = new Date(currentTime - i * 60000); // i minutes ago
+                        timePoints.push(timestamp);
+                    }
+                    // Find the closest data points to our desired timestamps
+                    timePoints.forEach(targetTime => {
+                        // Find the closest data point to this target time
+                        let closestPoint = data[0];
+                        let smallestDiff = Math.abs(new Date(data[0].timestamp) - targetTime);
+                        data.forEach(point => {
+                            const diff = Math.abs(new Date(point.timestamp) - targetTime);
+                            if (diff < smallestDiff) {
+                                smallestDiff = diff;
+                                closestPoint = point;
+                            }
+                        });
+                        // Only add the point if it's within 2.5 minutes of our target time
+                        if (smallestDiff <= 150000) { // 2.5 minutes in milliseconds
+                            chart.data.labels.push(targetTime);
+                            chart.data.datasets[0].data.push({
+                                x: targetTime,
+                                y: closestPoint.temperature
+                            });
+                            chart.data.datasets[1].data.push({
+                                x: targetTime,
+                                y: closestPoint.humidity
+                            });
+                        }
+                    });
+                    chart.update(); // Update the graph with the latest data
+                    // Update last known data with the most recent point
+                    if (data.length > 0) {
+                        const latestPoint = data[data.length - 1];
+                        lastTemp = latestPoint.temperature;
+                        lastHumidity = latestPoint.humidity;
+                    }
+                })
+                .catch(error => console.error("Error fetching graph data:", error));
+        }
+        // Set intervals
+        setInterval(updateLatestData, 2000); // Fetch latest data every 2 seconds for real-time updates
+        setInterval(fetchGraphData, 300000); // Fetch and update graph data every 5 minutes
+        // Initial fetch
+        updateLatestData(); // To fetch the latest data immediately
+        fetchInitialGraphData(); // To fetch and display the historical data initially
     </script>
 </body>
 </html>
