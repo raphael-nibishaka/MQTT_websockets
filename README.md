@@ -1,4 +1,4 @@
-# MQTT Weather Station (WebSockets)
+# MQTT Weather Station (WebSockets and Mqtt)
 
 A simple weather station interface that displays real-time temperature and humidity data by connecting to an MQTT broker over WebSockets.
 
